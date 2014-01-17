@@ -4,9 +4,15 @@ import (
 	"errors"
 
 	"github.com/reggo/common"
+	"github.com/reggo/loss"
 	"github.com/reggo/regularize"
 
 	"github.com/gonum/matrix/mat64"
+)
+
+const (
+	minGrain = 1
+	maxGrain = 500
 )
 
 func verifyInputs(inputs, outputs *mat64.Dense, weights []float64) ([]float64, error) {
@@ -30,7 +36,7 @@ func verifyInputs(inputs, outputs *mat64.Dense, weights []float64) ([]float64, e
 }
 
 // Linear is a type whose parameters are a linear combination of a set of features
-type Linear interface {
+type LinearSolver interface {
 	// NumFeatures returns the number of features
 	NumFeatures() int
 
@@ -43,7 +49,7 @@ type Linear interface {
 }
 
 // IsLinearRegularizer returns true if the regularizer can be used with LinearSolve
-func IsLinearRegularizer(r regularize.Regularizer) bool {
+func IsLinearSolveRegularizer(r regularize.Regularizer) bool {
 	switch r.(type) {
 	case regularize.None:
 		return true
@@ -52,9 +58,19 @@ func IsLinearRegularizer(r regularize.Regularizer) bool {
 	}
 }
 
-// LinearSolve trains a Linear algorithm. Will return nil if inputs and outputs don't have the same number of rows and if
-func LinearSolve(l Linear, inputs, trueOutputs *mat64.Dense, weights []float64, r regularize.Regularizer) (parameters *mat64.Dense, err error) {
-	if !IsLinearRegularizer(r) {
+func IsLinearSolveLosser(l loss.Losser) bool {
+	switch l.(type) {
+	case loss.SquaredDistance:
+		return true
+	default:
+		return false
+	}
+}
+
+// LinearSolve trains a Linear algorithm.
+// Assumes inputs and outputs are already scaled
+func LinearSolve(l LinearSolver, inputs, trueOutputs *mat64.Dense, weights []float64, r regularize.Regularizer) (parameters *mat64.Dense, err error) {
+	if !IsLinearSolveRegularizer(r) {
 		return nil, errors.New("Regularizer type not supported")
 	}
 
@@ -63,28 +79,26 @@ func LinearSolve(l Linear, inputs, trueOutputs *mat64.Dense, weights []float64, 
 		return nil, err
 	}
 
-	nSamples, nInputs := inputs.Dims()
+	nSamples, _ := inputs.Dims()
 	nFeatures := l.NumFeatures()
 
 	// Create the memory for storing the results from featurize
-	feature := make([]float64, nFeatures*nSamples)
+	//feature := make([]float64, nFeatures*nSamples)
+	feature := mat64.NewDense(nSamples, nFeatures, nil)
 
 	parallel := l.CanParallelize()
-
-	input := make([]float64, nInputs)
 	f := func(start, end int) {
 		for i := start; i < end; i++ {
-			inputs.Row(input, i)
-			l.Featurize(input, feature[i*nSamples:(i+1)*nSamples])
+			l.Featurize(inputs.RowView(i), feature.RowView(i))
 		}
 	}
 	if parallel {
-		parallelFor(nSamples, getGrain(nSamples), f)
+		common.ParallelFor(nSamples, common.GetGrainSize(nSamples, minGrain, maxGrain), f)
 	} else {
 		f(0, nSamples)
 	}
 
-	A := mat64.NewDense(nSamples, nFeatures, feature)
+	A := feature
 
 	switch r.(type) {
 	case regularize.None:
