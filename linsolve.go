@@ -1,13 +1,15 @@
 package train
 
 import (
-	"errors"
+	"math"
 
 	"github.com/reggo/common"
 	"github.com/reggo/loss"
 	"github.com/reggo/regularize"
 
 	"github.com/gonum/matrix/mat64"
+
+	"mattest"
 )
 
 const (
@@ -15,28 +17,8 @@ const (
 	maxGrain = 500
 )
 
-func verifyInputs(inputs, outputs *mat64.Dense, weights []float64) ([]float64, error) {
-	// TODO: Replace this
-	nSamples, _ := inputs.Dims()
-	nOutputSamples, _ := outputs.Dims()
-	if nSamples != nOutputSamples {
-		return weights, common.DataMismatch{Input: nSamples, Output: nOutputSamples, Weight: len(weights)}
-	}
-	if len(weights) != 0 {
-		nWeightSamples := len(weights)
-		if nWeightSamples != nSamples {
-			return weights, common.DataMismatch{Input: nSamples, Output: nOutputSamples, Weight: len(weights)}
-		}
-	}
-	weights = make([]float64, nSamples)
-	for i := range weights {
-		weights[i] = 1
-	}
-	return weights, nil
-}
-
 // Linear is a type whose parameters are a linear combination of a set of features
-type LinearSolver interface {
+type Linear interface {
 	// NumFeatures returns the number of features
 	NumFeatures() int
 
@@ -46,6 +28,43 @@ type LinearSolver interface {
 
 	// CanParallelize returns true if Featurize can be called in parallel
 	CanParallelize() bool
+}
+
+// Creates the features from the inputs. Features must be nSamples x nFeatures or nil
+func FeaturizeLinear(l Linear, inputs mat64.Matrix, features *mat64.Dense) *mat64.Dense {
+	nSamples, nDim := inputs.Dims()
+	if features == nil {
+		nFeatures := l.NumFeatures()
+		features = mat64.NewDense(nSamples, nFeatures, nil)
+	}
+
+	rowViewer, isRowViewer := inputs.(mat64.RowViewer)
+	var f func(start, end int)
+	if isRowViewer {
+		f = func(start, end int) {
+			for i := start; i < end; i++ {
+				l.Featurize(rowViewer.RowView(i), features.RowView(i))
+			}
+		}
+	} else {
+		f = func(start, end int) {
+			input := make([]float64, nDim)
+			for i := start; i < end; i++ {
+				for j := range input {
+					input[i] = inputs.At(i, j)
+				}
+				l.Featurize(input, features.RowView(i))
+				// Don't need to set because Featurize doesn't modify
+			}
+		}
+	}
+
+	if l.CanParallelize() {
+		common.ParallelFor(nSamples, common.GetGrainSize(nSamples, minGrain, maxGrain), f)
+	} else {
+		f(0, nSamples)
+	}
+	return features
 }
 
 // IsLinearRegularizer returns true if the regularizer can be used with LinearSolve
@@ -67,44 +86,63 @@ func IsLinearSolveLosser(l loss.Losser) bool {
 	}
 }
 
+type MulMatrix interface {
+	mat64.Muler
+	mat64.Matrix
+}
+
 // LinearSolve trains a Linear algorithm.
 // Assumes inputs and outputs are already scaled
-func LinearSolve(l LinearSolver, inputs, trueOutputs *mat64.Dense, weights []float64, r regularize.Regularizer) (parameters *mat64.Dense, err error) {
+// If features is nil will call featurize
+// Will return nil if regularizer is not a linear regularizer
+// Is destructive if any of the weights are zero
+func LinearSolve(l Linear, features *mat64.Dense, inputs, trueOutputs MulMatrix, weights []float64, r regularize.Regularizer) (parameters *mat64.Dense) {
+	// TODO: Allow tikhonov regularization
+	// TODO: Add test for weights
+
 	if !IsLinearSolveRegularizer(r) {
-		return nil, errors.New("Regularizer type not supported")
+		return nil
 	}
 
-	weights, err = verifyInputs(inputs, trueOutputs, weights)
-	if err != nil {
-		return nil, err
+	if features == nil {
+		features = FeaturizeLinear(l, inputs, features)
 	}
 
-	nSamples, _ := inputs.Dims()
-	nFeatures := l.NumFeatures()
+	_, nFeatures := features.Dims()
 
-	// Create the memory for storing the results from featurize
-	//feature := make([]float64, nFeatures*nSamples)
-	feature := mat64.NewDense(nSamples, nFeatures, nil)
-
-	parallel := l.CanParallelize()
-	f := func(start, end int) {
-		for i := start; i < end; i++ {
-			l.Featurize(inputs.RowView(i), feature.RowView(i))
+	if weights != nil {
+		for i, weight := range weights {
+			weights[i] = math.Sqrt(weight)
 		}
-	}
-	if parallel {
-		common.ParallelFor(nSamples, common.GetGrainSize(nSamples, minGrain, maxGrain), f)
-	} else {
-		f(0, nSamples)
-	}
+		diagWeight := mattest.NewDiagonal(nFeatures, weights)
 
-	A := feature
+		trueOutputs.Mul(diagWeight, trueOutputs)
+		features.Mul(diagWeight, features)
+
+		defer func() {
+			// Unscale by the weights
+			err := diagWeight.Inv(diagWeight)
+			if err != nil {
+				panic(err)
+			}
+			// TODO: Figure out what to do with zero weights
+			trueOutputs.Mul(diagWeight, trueOutputs)
+			features.Mul(diagWeight, features)
+			for i, weight := range weights {
+				weights[i] = weight * weight
+
+			}
+		}()
+
+	}
 
 	switch r.(type) {
 	case regularize.None:
 	default:
 		panic("Shouldn't be here. Must be error in IsLinearRegularizer")
 	}
-	parameters = mat64.Solve(A, trueOutputs)
-	return parameters, nil
+
+	parameters = mat64.Solve(features, trueOutputs)
+
+	return parameters
 }
