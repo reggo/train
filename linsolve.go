@@ -6,10 +6,9 @@ import (
 	"github.com/reggo/common"
 	"github.com/reggo/loss"
 	"github.com/reggo/regularize"
+	"github.com/reggo/train/diagonal"
 
 	"github.com/gonum/matrix/mat64"
-
-	"mattest"
 )
 
 const (
@@ -70,20 +69,22 @@ func FeaturizeLinear(l Linear, inputs mat64.Matrix, features *mat64.Dense) *mat6
 // IsLinearRegularizer returns true if the regularizer can be used with LinearSolve
 func IsLinearSolveRegularizer(r regularize.Regularizer) bool {
 	switch r.(type) {
+	case nil:
 	case regularize.None:
-		return true
 	default:
 		return false
 	}
+	return true
 }
 
 func IsLinearSolveLosser(l loss.Losser) bool {
 	switch l.(type) {
+	case nil:
 	case loss.SquaredDistance:
-		return true
 	default:
 		return false
 	}
+	return true
 }
 
 type MulMatrix interface {
@@ -96,7 +97,7 @@ type MulMatrix interface {
 // If features is nil will call featurize
 // Will return nil if regularizer is not a linear regularizer
 // Is destructive if any of the weights are zero
-func LinearSolve(l Linear, features *mat64.Dense, inputs, trueOutputs MulMatrix, weights []float64, r regularize.Regularizer) (parameters *mat64.Dense) {
+func LinearSolve(l Linear, features *mat64.Dense, inputs, trueOutputs mat64.Matrix, weights []float64, r regularize.Regularizer) (parameters *mat64.Dense) {
 	// TODO: Allow tikhonov regularization
 	// TODO: Add test for weights
 
@@ -110,39 +111,39 @@ func LinearSolve(l Linear, features *mat64.Dense, inputs, trueOutputs MulMatrix,
 
 	_, nFeatures := features.Dims()
 
+	var weightedFeatures, weightedOutput *mat64.Dense
+
 	if weights != nil {
+
+		nSamples, outputDim := trueOutputs.Dims()
+		weightedOutput = mat64.NewDense(nSamples, outputDim, nil)
+		weightedOutput.Copy(trueOutputs)
+
+		weightedFeatures = mat64.NewDense(nSamples, nFeatures, nil)
+		weightedFeatures.Copy(features)
+
+		scaledWeight := make([]float64, len(weights))
 		for i, weight := range weights {
-			weights[i] = math.Sqrt(weight)
+			scaledWeight[i] = math.Sqrt(weight)
 		}
-		diagWeight := mattest.NewDiagonal(nFeatures, weights)
 
-		trueOutputs.Mul(diagWeight, trueOutputs)
-		features.Mul(diagWeight, features)
+		diagWeight := diagonal.NewDiagonal(nFeatures, weights)
 
-		defer func() {
-			// Unscale by the weights
-			err := diagWeight.Inv(diagWeight)
-			if err != nil {
-				panic(err)
-			}
-			// TODO: Figure out what to do with zero weights
-			trueOutputs.Mul(diagWeight, trueOutputs)
-			features.Mul(diagWeight, features)
-			for i, weight := range weights {
-				weights[i] = weight * weight
-
-			}
-		}()
-
+		weightedOutput.Mul(diagWeight, trueOutputs)
+		weightedFeatures.Mul(diagWeight, features)
 	}
 
 	switch r.(type) {
+	case nil:
 	case regularize.None:
 	default:
 		panic("Shouldn't be here. Must be error in IsLinearRegularizer")
 	}
 
-	parameters = mat64.Solve(features, trueOutputs)
-
+	if weights == nil {
+		parameters = mat64.Solve(features, trueOutputs)
+		return parameters
+	}
+	parameters = mat64.Solve(weightedFeatures, weightedOutput)
 	return parameters
 }
