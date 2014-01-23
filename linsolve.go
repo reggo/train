@@ -92,17 +92,17 @@ func CanLinearSolve(trainable Trainable, losser loss.Losser, regularizer regular
 // Is destructive if any of the weights are zero
 // Losser is always the two-norm
 func LinearSolve(linearTrainable LinearTrainable, features *mat64.Dense, inputs, trueOutputs common.RowMatrix,
-	weights []float64, r regularize.Regularizer) (parameters []float64) {
+	weights []float64, regularizer regularize.Regularizer) (parameters []float64) {
 	// TODO: Allow tikhonov regularization
 	// TODO: Add test for weights
 	// TODO: Need to do something about returning a []float64
 
-	if !IsLinearSolveRegularizer(r) {
+	if !IsLinearSolveRegularizer(regularizer) {
 		return nil
 	}
 
 	if features == nil {
-		features = FeaturizeTrainable(trainable, inputs, features)
+		features = FeaturizeTrainable(linearTrainable, inputs, features)
 	}
 
 	_, nFeatures := features.Dims()
@@ -125,7 +125,7 @@ func LinearSolve(linearTrainable LinearTrainable, features *mat64.Dense, inputs,
 		weightedFeatures.Mul(diagWeight, features)
 	}
 
-	switch r.(type) {
+	switch regularizer.(type) {
 	case nil:
 	case regularize.None:
 	default:
