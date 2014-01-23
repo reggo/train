@@ -1,14 +1,5 @@
 package train
 
-import (
-	"github.com/gonum/matrix/mat64"
-)
-
-type RowMatrix interface {
-	mat64.Matrix
-	Row([]float64, int) []float64
-}
-
 // TODO: Still would be nice to have a train.Train method which does the smart stuff
 
 // TODO: Move interfaces into their own file

@@ -29,8 +29,8 @@ type BatchGradBased struct {
 	nParameters int
 	grainSize   int
 
-	inputs  RowMatrix
-	outputs RowMatrix
+	inputs  common.RowMatrix
+	outputs common.RowMatrix
 
 	features *mat64.Dense
 
@@ -38,7 +38,7 @@ type BatchGradBased struct {
 }
 
 // NewBatchGradBased creates a new batch grad based with the given inputs
-func NewBatchGradBased(t Trainable, precompute bool, inputs, outputs RowMatrix, losser loss.DerivLosser, regularizer regularize.Regularizer) *BatchGradBased {
+func NewBatchGradBased(t Trainable, precompute bool, inputs, outputs common.RowMatrix, losser loss.DerivLosser, regularizer regularize.Regularizer) *BatchGradBased {
 	var features *mat64.Dense
 	if precompute {
 		features = FeaturizeTrainable(t, inputs, nil)

@@ -12,7 +12,7 @@ import (
 )
 
 // Creates the features from the inputs. Features must be nSamples x nFeatures or nil
-func FeaturizeTrainable(t Trainable, inputs RowMatrix, featurizedInputs *mat64.Dense) *mat64.Dense {
+func FeaturizeTrainable(t Trainable, inputs common.RowMatrix, featurizedInputs *mat64.Dense) *mat64.Dense {
 	nSamples, nDim := inputs.Dims()
 	if featurizedInputs == nil {
 		nFeatures := t.NumFeatures()
@@ -91,7 +91,7 @@ func CanLinearSolve(trainable Trainable, losser loss.Losser, regularizer regular
 // Will return nil if regularizer is not a linear regularizer
 // Is destructive if any of the weights are zero
 // Losser is always the two-norm
-func LinearSolve(trainable LinearTrainable, features *mat64.Dense, inputs, trueOutputs RowMatrix,
+func LinearSolve(trainable LinearTrainable, features *mat64.Dense, inputs, trueOutputs common.RowMatrix,
 	weights []float64, r regularize.Regularizer) (parameters []float64) {
 	// TODO: Allow tikhonov regularization
 	// TODO: Add test for weights
