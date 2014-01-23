@@ -91,6 +91,7 @@ func CanLinearSolve(trainable Trainable, losser loss.Losser, regularizer regular
 // Will return nil if regularizer is not a linear regularizer
 // Is destructive if any of the weights are zero
 // Losser is always the two-norm
+// Does not set the value of the parameters (in case this is called in parallel with a different routine)
 func LinearSolve(linearTrainable LinearTrainable, features *mat64.Dense, inputs, trueOutputs common.RowMatrix,
 	weights []float64, regularizer regularize.Regularizer) (parameters []float64) {
 	// TODO: Allow tikhonov regularization

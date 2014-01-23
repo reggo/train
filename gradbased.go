@@ -38,10 +38,10 @@ type BatchGradBased struct {
 }
 
 // NewBatchGradBased creates a new batch grad based with the given inputs
-func NewBatchGradBased(t Trainable, precompute bool, inputs, outputs common.RowMatrix, losser loss.DerivLosser, regularizer regularize.Regularizer) *BatchGradBased {
+func NewBatchGradBased(trainable Trainable, cacheFeatures bool, inputs, outputs common.RowMatrix, losser loss.DerivLosser, regularizer regularize.Regularizer) *BatchGradBased {
 	var features *mat64.Dense
-	if precompute {
-		features = FeaturizeTrainable(t, inputs, nil)
+	if cacheFeatures {
+		features = FeaturizeTrainable(trainable, inputs, nil)
 	}
 
 	// TODO: Add in error checking
@@ -49,7 +49,7 @@ func NewBatchGradBased(t Trainable, precompute bool, inputs, outputs common.RowM
 	nTrain, outputDim := outputs.Dims()
 	_, inputDim := inputs.Dims()
 	g := &BatchGradBased{
-		t:           t,
+		t:           trainable,
 		inputs:      inputs,
 		outputs:     outputs,
 		features:    features,
@@ -58,8 +58,8 @@ func NewBatchGradBased(t Trainable, precompute bool, inputs, outputs common.RowM
 		nTrain:      nTrain,
 		outputDim:   outputDim,
 		inputDim:    inputDim,
-		nParameters: t.NumParameters(),
-		grainSize:   t.GrainSize(),
+		nParameters: trainable.NumParameters(),
+		grainSize:   trainable.GrainSize(),
 	}
 
 	// TODO: Add in row viewer stuff
@@ -73,7 +73,7 @@ func NewBatchGradBased(t Trainable, precompute bool, inputs, outputs common.RowM
 	switch {
 	default:
 		panic("Shouldn't be here")
-	case precompute:
+	case cacheFeatures:
 		f = func(start, end int, c chan lossDerivStruct, parameters []float64) {
 			lossDeriver := g.t.NewLossDeriver()
 			prediction := make([]float64, g.outputDim)
@@ -100,7 +100,7 @@ func NewBatchGradBased(t Trainable, precompute bool, inputs, outputs common.RowM
 				deriv: totalDLossDWeight,
 			}
 		}
-	case !precompute:
+	case !cacheFeatures:
 		f = func(start, end int, c chan lossDerivStruct, parameters []float64) {
 			lossDeriver := g.t.NewLossDeriver()
 			prediction := make([]float64, g.outputDim)
