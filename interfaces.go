@@ -1,5 +1,9 @@
 package train
 
+import (
+	"github.com/gonum/matrix/mat64"
+)
+
 type RowMatrix interface {
 	mat64.Matrix
 	Row([]float64, int) []float64

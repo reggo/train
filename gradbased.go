@@ -29,8 +29,8 @@ type BatchGradBased struct {
 	nParameters int
 	grainSize   int
 
-	inputs  mat64.Matrix
-	outputs mat64.Matrix
+	inputs  RowMatrix
+	outputs RowMatrix
 
 	features *mat64.Dense
 
@@ -38,7 +38,7 @@ type BatchGradBased struct {
 }
 
 // NewBatchGradBased creates a new batch grad based with the given inputs
-func NewBatchGradBased(t Trainable, precompute bool, inputs, outputs mat64.Matrix, losser loss.DerivLosser, regularizer regularize.Regularizer) *BatchGradBased {
+func NewBatchGradBased(t Trainable, precompute bool, inputs, outputs RowMatrix, losser loss.DerivLosser, regularizer regularize.Regularizer) *BatchGradBased {
 	var features *mat64.Dense
 	if precompute {
 		features = FeaturizeTrainable(t, inputs, nil)
@@ -86,9 +86,13 @@ func NewBatchGradBased(t Trainable, precompute bool, inputs, outputs mat64.Matri
 				// Compute the prediction
 				lossDeriver.Predict(parameters, g.features.RowView(i), prediction)
 				// Compute the loss
-				for j := range output {
-					output[j] = g.outputs.At(i, j)
-				}
+
+				g.outputs.Row(output, i)
+				/*
+					for j := range output {
+						output[j] = g.outputs.At(i, j)
+					}
+				*/
 				loss += g.losser.LossDeriv(prediction, output, dLossDPred)
 				// Compute the derivative
 				lossDeriver.Deriv(parameters, g.features.RowView(i), prediction, dLossDPred, dLossDWeight)
