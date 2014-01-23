@@ -88,11 +88,6 @@ func NewBatchGradBased(t Trainable, precompute bool, inputs, outputs RowMatrix, 
 				// Compute the loss
 
 				g.outputs.Row(output, i)
-				/*
-					for j := range output {
-						output[j] = g.outputs.At(i, j)
-					}
-				*/
 				loss += g.losser.LossDeriv(prediction, output, dLossDPred)
 				// Compute the derivative
 				lossDeriver.Deriv(parameters, g.features.RowView(i), prediction, dLossDPred, dLossDWeight)
@@ -121,19 +116,16 @@ func NewBatchGradBased(t Trainable, precompute bool, inputs, outputs RowMatrix, 
 
 			featurizer := g.t.NewFeaturizer()
 			for i := start; i < end; i++ {
-				// featurize the input
-				for j := range input {
-					input[j] = g.inputs.At(i, j)
-				}
+
+				g.inputs.Row(input, i)
 
 				featurizer.Featurize(input, features)
 
 				// Compute the prediction
 				lossDeriver.Predict(parameters, features, prediction)
 				// Compute the loss
-				for j := range output {
-					output[j] = g.outputs.At(i, j)
-				}
+				g.outputs.Row(output, i)
+
 				loss += g.losser.LossDeriv(prediction, output, dLossDPred)
 
 				// Compute the derivative
