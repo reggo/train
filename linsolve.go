@@ -11,56 +11,12 @@ import (
 	"github.com/gonum/matrix/mat64"
 )
 
-// TODO: Still would be nice to have a train.Train method which does the smart stuff
-
-const (
-	minGrain = 1
-	maxGrain = 500
-)
-
-type LossDeriver interface {
-	// Gets the current parameters
-	//Parameters() []float64
-
-	// Sets the current parameters
-	//SetParameters([]float64)
-
-	// Features is either the input or the output from Featurize
-	// Deriv will be called after predict so memory may be cached
-	Predict(featurizedInput, predOutput []float64)
-
-	// Deriv computes the derivative of the loss with respect
-	// to the weight given the predicted output and the derivative
-	// of the loss function with respect to the prediction
-	Deriv(featurizedInput, predOutput, dLossDPred, dLossDWeight []float64)
-}
-
-type Featurizer interface {
-	// Featurize transforms the input into the elements of the feature matrix. Feature
-	// will have length NumFeatures(). Should not modify input
-	Featurize(input, feature []float64)
-}
-
-// Linear is a type whose parameters are a linear combination of a set of features
-type Trainable interface {
-	// NumFeatures returns the number of features
-	NumFeatures() int // NumFeatures is how many features the input is transformed into
-	InputDim() int
-	OutputDim() int
-	NumParameters() int        // returns the number of parameters
-	Parameters([]float64)      // Puts in place all the parameters into the input
-	SetParameters([]float64)   // Sets the new parameters
-	NewFeaturizer() Featurizer // Returns a type whose featurize method can be called concurrently
-	NewLossDeriver() LossDeriver
-	GrainSize() int // Returns the suggested grain size
-}
-
 // Creates the features from the inputs. Features must be nSamples x nFeatures or nil
-func FeaturizeTrainable(t Trainable, inputs mat64.Matrix, features *mat64.Dense) *mat64.Dense {
+func FeaturizeTrainable(t Trainable, inputs mat64.Matrix, featurizedInputs *mat64.Dense) *mat64.Dense {
 	nSamples, nDim := inputs.Dims()
-	if features == nil {
+	if featurizedInputs == nil {
 		nFeatures := t.NumFeatures()
-		features = mat64.NewDense(nSamples, nFeatures, nil)
+		featurizedInputs = mat64.NewDense(nSamples, nFeatures, nil)
 	}
 
 	rowViewer, isRowViewer := inputs.(mat64.RowViewer)
@@ -69,7 +25,7 @@ func FeaturizeTrainable(t Trainable, inputs mat64.Matrix, features *mat64.Dense)
 		f = func(start, end int) {
 			featurizer := t.NewFeaturizer()
 			for i := start; i < end; i++ {
-				featurizer.Featurize(rowViewer.RowView(i), features.RowView(i))
+				featurizer.Featurize(rowViewer.RowView(i), featurizedInputs.RowView(i))
 			}
 		}
 	} else {
@@ -80,13 +36,13 @@ func FeaturizeTrainable(t Trainable, inputs mat64.Matrix, features *mat64.Dense)
 				for j := range input {
 					input[i] = inputs.At(i, j)
 				}
-				featurizer.Featurize(input, features.RowView(i))
+				featurizer.Featurize(input, featurizedInputs.RowView(i))
 			}
 		}
 	}
 
 	common.ParallelFor(nSamples, common.GetGrainSize(nSamples, minGrain, maxGrain), f)
-	return features
+	return featurizedInputs
 }
 
 // IsLinearRegularizer returns true if the regularizer can be used with LinearSolve
@@ -110,9 +66,25 @@ func IsLinearSolveLosser(l loss.Losser) bool {
 	return true
 }
 
-type MulMatrix interface {
-	mat64.Muler
-	mat64.Matrix
+type LinearTrainable interface {
+	Trainable
+	Linear()
+}
+
+// CanLinearSolve returns true if linear solve can be called on the trainable with
+// the losser and regularizer
+func CanLinearSolve(trainable Trainable, losser loss.Losser, regularizer regularize.Regularizer) bool {
+	_, ok := trainable.(LinearTrainable)
+	if !ok {
+		return false
+	}
+	if !IsLinearSolveLosser(losser) {
+		return false
+	}
+	if !IsLinearSolveRegularizer(regularizer) {
+		return false
+	}
+	return true
 }
 
 // LinearSolve trains a Linear algorithm.
@@ -120,16 +92,19 @@ type MulMatrix interface {
 // If features is nil will call featurize
 // Will return nil if regularizer is not a linear regularizer
 // Is destructive if any of the weights are zero
-func LinearSolve(l Trainable, features *mat64.Dense, inputs, trueOutputs mat64.Matrix, weights []float64, r regularize.Regularizer) (parameters *mat64.Dense) {
+// Losser is always the two-norm
+func LinearSolve(trainable LinearTrainable, features *mat64.Dense, inputs, trueOutputs mat64.Matrix,
+	weights []float64, r regularize.Regularizer) (parameters []float64) {
 	// TODO: Allow tikhonov regularization
 	// TODO: Add test for weights
+	// TODO: Need to do something about returning a []float64
 
 	if !IsLinearSolveRegularizer(r) {
 		return nil
 	}
 
 	if features == nil {
-		features = FeaturizeTrainable(l, inputs, features)
+		features = FeaturizeTrainable(trainable, inputs, features)
 	}
 
 	_, nFeatures := features.Dims()
@@ -158,11 +133,12 @@ func LinearSolve(l Trainable, features *mat64.Dense, inputs, trueOutputs mat64.M
 	default:
 		panic("Shouldn't be here. Must be error in IsLinearRegularizer")
 	}
-
 	if weights == nil {
-		parameters = mat64.Solve(features, trueOutputs)
-		return parameters
+		parameterMat := mat64.Solve(features, trueOutputs)
+		return parameterMat.RawMatrix().Data
+
 	}
-	parameters = mat64.Solve(weightedFeatures, weightedOutput)
-	return parameters
+	parameterMat := mat64.Solve(weightedFeatures, weightedOutput)
+
+	return parameterMat.RawMatrix().Data
 }

@@ -9,15 +9,15 @@ import (
 	"github.com/reggo/common"
 	"github.com/reggo/loss"
 	"github.com/reggo/regularize"
+
+	"fmt"
 )
 
-type lossDerivStruct struct {
-	loss  float64
-	deriv []float64
-}
+var _ = fmt.Println
 
 // BatchGradBased is a wrapper for training a trainable with
 // a fixed set of samples
+// TODO: Maybe want to move Featurize out of batch grad (or let pass in features as an input)
 type BatchGradBased struct {
 	t           Trainable
 	losser      loss.DerivLosser
@@ -34,14 +34,14 @@ type BatchGradBased struct {
 
 	features *mat64.Dense
 
-	lossDerivFunc func(start, end int, c chan lossDerivStruct)
+	lossDerivFunc func(start, end int, c chan lossDerivStruct, parameters []float64)
 }
 
 // NewBatchGradBased creates a new batch grad based with the given inputs
 func NewBatchGradBased(t Trainable, precompute bool, inputs, outputs mat64.Matrix, losser loss.DerivLosser, regularizer regularize.Regularizer) *BatchGradBased {
 	var features *mat64.Dense
 	if precompute {
-		FeaturizeTrainable(t, inputs, features)
+		features = FeaturizeTrainable(t, inputs, nil)
 	}
 
 	// TODO: Add in error checking
@@ -68,13 +68,13 @@ func NewBatchGradBased(t Trainable, precompute bool, inputs, outputs mat64.Matri
 	//outputRowViewer, ok := outputs.(mat64.RowViewer)
 
 	// TODO: Move this to its own function
-	var f func(start, end int, c chan lossDerivStruct)
+	var f func(start, end int, c chan lossDerivStruct, parameters []float64)
 
 	switch {
 	default:
 		panic("Shouldn't be here")
 	case precompute:
-		f = func(start, end int, c chan lossDerivStruct) {
+		f = func(start, end int, c chan lossDerivStruct, parameters []float64) {
 			lossDeriver := g.t.NewLossDeriver()
 			prediction := make([]float64, g.outputDim)
 			dLossDPred := make([]float64, g.outputDim)
@@ -84,26 +84,25 @@ func NewBatchGradBased(t Trainable, precompute bool, inputs, outputs mat64.Matri
 			output := make([]float64, g.outputDim)
 			for i := start; i < end; i++ {
 				// Compute the prediction
-				lossDeriver.Predict(g.features.RowView(i), prediction)
+				lossDeriver.Predict(parameters, g.features.RowView(i), prediction)
 				// Compute the loss
 				for j := range output {
 					output[j] = g.outputs.At(i, j)
 				}
 				loss += g.losser.LossDeriv(prediction, output, dLossDPred)
 				// Compute the derivative
-				lossDeriver.Deriv(g.features.RowView(i), prediction, dLossDPred, dLossDWeight)
+				lossDeriver.Deriv(parameters, g.features.RowView(i), prediction, dLossDPred, dLossDWeight)
 
 				floats.Add(totalDLossDWeight, dLossDWeight)
-
-				// Send the value back on the channel
-				c <- lossDerivStruct{
-					loss:  loss,
-					deriv: totalDLossDWeight,
-				}
+			}
+			// Send the value back on the channel
+			c <- lossDerivStruct{
+				loss:  loss,
+				deriv: totalDLossDWeight,
 			}
 		}
 	case !precompute:
-		f = func(start, end int, c chan lossDerivStruct) {
+		f = func(start, end int, c chan lossDerivStruct, parameters []float64) {
 			lossDeriver := g.t.NewLossDeriver()
 			prediction := make([]float64, g.outputDim)
 			dLossDPred := make([]float64, g.outputDim)
@@ -126,7 +125,7 @@ func NewBatchGradBased(t Trainable, precompute bool, inputs, outputs mat64.Matri
 				featurizer.Featurize(input, features)
 
 				// Compute the prediction
-				lossDeriver.Predict(features, prediction)
+				lossDeriver.Predict(parameters, features, prediction)
 				// Compute the loss
 				for j := range output {
 					output[j] = g.outputs.At(i, j)
@@ -134,7 +133,7 @@ func NewBatchGradBased(t Trainable, precompute bool, inputs, outputs mat64.Matri
 				loss += g.losser.LossDeriv(prediction, output, dLossDPred)
 
 				// Compute the derivative
-				lossDeriver.Deriv(features, prediction, dLossDPred, dLossDWeight)
+				lossDeriver.Deriv(parameters, features, prediction, dLossDPred, dLossDWeight)
 
 				// Add to the total derivative
 				floats.Add(totalDLossDWeight, dLossDWeight)
@@ -154,12 +153,13 @@ func NewBatchGradBased(t Trainable, precompute bool, inputs, outputs mat64.Matri
 }
 
 // ObjDeriv computes the objective value and stores the derivative in place
+// TODO: Should ensure that ObjDeriv can be called in parallel
 func (g *BatchGradBased) ObjDeriv(parameters []float64, derivative []float64) (loss float64) {
 	c := make(chan lossDerivStruct, 10)
 
 	// Set the channel for parallel for
 	f := func(start, end int) {
-		g.lossDerivFunc(start, end, c)
+		g.lossDerivFunc(start, end, c, parameters)
 	}
 
 	go func() {
@@ -198,6 +198,6 @@ func (g *BatchGradBased) ObjDeriv(parameters []float64, derivative []float64) (l
 	}
 	// Normalize by the number of training samples
 	loss /= float64(g.nTrain)
-	floats.Scale(float64(g.nTrain), derivative)
+	floats.Scale(1/float64(g.nTrain), derivative)
 	return loss
 }
