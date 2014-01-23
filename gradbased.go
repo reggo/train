@@ -150,7 +150,7 @@ func NewBatchGradBased(trainable Trainable, cacheFeatures bool, inputs, outputs 
 
 // ObjDeriv computes the objective value and stores the derivative in place
 // TODO: Should ensure that ObjDeriv can be called in parallel
-func (g *BatchGradBased) ObjDeriv(parameters []float64, derivative []float64) (loss float64) {
+func (g *BatchGradBased) ObjGrad(parameters []float64, derivative []float64) (loss float64) {
 	c := make(chan lossDerivStruct, 10)
 
 	// Set the channel for parallel for
