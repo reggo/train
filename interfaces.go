@@ -5,7 +5,7 @@ import (
 )
 
 type RowMatrix interface {
-	mat64.Matrix
+	//mat64.Matrix
 	Row([]float64, int) []float64
 }
 
